@@ -21,9 +21,18 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   lines.forEach((l, i) => ctx.fillText(l, x, startY + i * lineHeight))
 }
 
+function getDisplayWidth(canvas) {
+  return Math.min(1100, canvas.parentElement?.clientWidth || window.innerWidth - 24 || 900)
+}
+
+function getDpr() {
+  return Math.min(3, Math.max(1, window.devicePixelRatio || 1))
+}
+
 /**
  * Canvas-backed viewer so pixels can be wiped to gray+copyright on capture.
  * Native apps (GPay) use OS FLAG_SECURE — browsers cannot.
+ * Renders at devicePixelRatio so phone screens stay sharp.
  */
 export default function SecureCanvasViewer({ src, format, wipe, copyright, disclaimer }) {
   const canvasRef = useRef(null)
@@ -37,17 +46,21 @@ export default function SecureCanvasViewer({ src, format, wipe, copyright, discl
 
   const paintCopyright = (canvas, w, h) => {
     const ctx = canvas.getContext('2d')
+    const dpr = canvas.width / Math.max(1, canvas.clientWidth || w)
     ctx.save()
+    ctx.setTransform(dpr || 1, 0, 0, dpr || 1, 0, 0)
+    const cssW = canvas.clientWidth || w
+    const cssH = canvas.clientHeight || h
     ctx.fillStyle = '#e5e7eb'
-    ctx.fillRect(0, 0, w, h)
+    ctx.fillRect(0, 0, cssW, cssH)
     ctx.fillStyle = '#111827'
     ctx.font = '600 22px system-ui, sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    wrapText(ctx, copyright, w / 2, h / 2 - 36, w * 0.8, 28)
+    wrapText(ctx, copyright, cssW / 2, cssH / 2 - 36, cssW * 0.8, 28)
     ctx.fillStyle = '#4b5563'
     ctx.font = '400 14px system-ui, sans-serif'
-    wrapText(ctx, disclaimer, w / 2, h / 2 + 40, w * 0.75, 20)
+    wrapText(ctx, disclaimer, cssW / 2, cssH / 2 + 40, cssW * 0.75, 20)
     ctx.restore()
   }
 
@@ -67,6 +80,7 @@ export default function SecureCanvasViewer({ src, format, wipe, copyright, discl
     const backup = backupRef.current
     if (!backup) return
     const ctx = canvas.getContext('2d')
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(backup, 0, 0)
   }
@@ -90,20 +104,26 @@ export default function SecureCanvasViewer({ src, format, wipe, copyright, discl
       if (cancelled) return
       const canvas = canvasRef.current
       if (!canvas) return
-      const maxW = Math.min(1100, canvas.parentElement?.clientWidth || 900)
-      const scale = Math.min(1, maxW / img.naturalWidth)
-      const w = Math.max(1, Math.floor(img.naturalWidth * scale))
-      const h = Math.max(1, Math.floor(img.naturalHeight * scale))
-      canvas.width = w
-      canvas.height = h
+      const dpr = getDpr()
+      const maxW = getDisplayWidth(canvas)
+      const fit = Math.min(1, maxW / img.naturalWidth)
+      const cssW = Math.max(1, Math.floor(img.naturalWidth * fit))
+      const cssH = Math.max(1, Math.floor(img.naturalHeight * fit))
+      canvas.width = Math.floor(cssW * dpr)
+      canvas.height = Math.floor(cssH * dpr)
+      canvas.style.width = `${cssW}px`
+      canvas.style.height = `${cssH}px`
       const ctx = canvas.getContext('2d')
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
       ctx.fillStyle = '#fff'
-      ctx.fillRect(0, 0, w, h)
-      ctx.drawImage(img, 0, 0, w, h)
+      ctx.fillRect(0, 0, cssW, cssH)
+      ctx.drawImage(img, 0, 0, cssW, cssH)
       snapshot(canvas)
       setPageCount(1)
       setStatus('ready')
-      if (wipe) paintCopyright(canvas, w, h)
+      if (wipe) paintCopyright(canvas, canvas.width, canvas.height)
     }
     img.onerror = () => !cancelled && setStatus('error')
     img.src = url
@@ -157,13 +177,19 @@ export default function SecureCanvasViewer({ src, format, wipe, copyright, discl
         if (cancelled) return
         const canvas = canvasRef.current
         if (!canvas) return
-        const maxW = Math.min(1100, canvas.parentElement?.clientWidth || 900)
+        const dpr = getDpr()
+        const maxW = getDisplayWidth(canvas)
         const unscaled = pdfPage.getViewport({ scale: 1 })
-        const scale = maxW / unscaled.width
-        const viewport = pdfPage.getViewport({ scale })
+        const cssScale = maxW / unscaled.width
+        const viewport = pdfPage.getViewport({ scale: cssScale * dpr })
+        const cssW = Math.floor(unscaled.width * cssScale)
+        const cssH = Math.floor(unscaled.height * cssScale)
         canvas.width = Math.floor(viewport.width)
         canvas.height = Math.floor(viewport.height)
+        canvas.style.width = `${cssW}px`
+        canvas.style.height = `${cssH}px`
         const ctx = canvas.getContext('2d')
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.fillStyle = '#fff'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         await pdfPage.render({ canvasContext: ctx, viewport }).promise
